@@ -215,9 +215,10 @@ def features_radarchart(features, clusters=None, htmlfile=None):
 
     Arg:
         features (dframe): neuron features
-        clusterinfo (dframe): 
+        clusters (dframe): body id index, "type"
+        htmlfile (str): save data as html file instead of displaying in notebook
     Returns:
-        heatmap showing the features
+        radar chart showing the features
 
     Note: should call on non-pca features but should restrict to most important features.
     """
