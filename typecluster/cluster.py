@@ -7,6 +7,29 @@ import json
 import numpy as np
 import pandas as pd
 
+
+def save_clustering(clusters, filename):
+    """Save clusters to disk.
+    
+    Args:
+        clusters (dataframe): bodyid, type mapping for a given clustering
+        filename (str): name of file
+    """
+
+    clusters.to_feature(filename)
+
+def load_clustering(filename):
+    """Load clusters from disk.
+    
+    Args:
+        filename (str): name of file
+    Returns:
+        dataframe: bodyid and type mappings for a given cluster 
+    """
+
+    return pd.read_feather(filename, columns=None, use_threads=True)
+
+
 def compute_distance_matrix(features):
     """Compute a distance matrix between the neurons.
 
@@ -23,12 +46,84 @@ def compute_distance_matrix(features):
 
     return pd.DataFrame(dist_matrix, index=features.index.values.tolist(), columns=features.index.values.tolist())
 
+
+def report_diffs(part1, part2, features1 = None, features2 = None):
+    """Return the bodies that are in different clusters. Ordered by distance if features provided.
+
+    Returns:
+        (list, list): Lists of pairs of bodies in different clusters compared to the
+        first partition and second partition respectively.  Sorted so the
+        first entry represents the largest difference between differences
+        (a large value means the two bodies are in very disimilar with respect
+        to one set of features despite being similar in the other feautures)
+    """
+    
+    # get part1 fragments
+    # get type => [bodyid...]
+    type2bodies = {}
+    for bodyid, cluster in part1.items():
+        if cluster not in type2bodies:
+            type2bodies[cluster] = []
+        type2bodies[cluster].append(bodyid)
+
+    falsepart1 = []
+    for cluster, bodyids in type2bodies.items():
+        for iter1 in range(len(bodyids)):
+            for iter2 in  range(iter1+1, len(bodyids)):
+                if part2[bodyids[iter1]] != part2[bodyids[iter2]]:
+                    if features2 is not None:
+                        v1 = features2.loc[bodyids[iter1]].values
+                        v2 = features2.loc[bodyids[iter2]].values
+                        diffvec = (v1-v2)**2
+                        diff = (diffvec.sum())**(1/2)
+    
+                        # difference between differences
+                        v1 = features1.loc[bodyids[iter1]].values
+                        v2 = features1.loc[bodyids[iter2]].values
+                        diffvec = (v1-v2)**2
+                        diff2 = (diffvec.sum())**(1/2)
+                        falsepart1.append((diff-diff2, diff, bodyids[iter1], bodyids[iter2]))
+
+    # get part2 fragments
+    type2bodies = {}
+    for bodyid, cluster in part2.items():
+        if cluster not in type2bodies:
+            type2bodies[cluster] = []
+        type2bodies[cluster].append(bodyid)
+
+    falsepart2 = []
+    for cluster, bodyids in type2bodies.items():
+        for iter1 in range(len(bodyids)):
+            for iter2 in  range(iter1+1, len(bodyids)):
+                if part1[bodyids[iter1]] != part1[bodyids[iter2]]:
+                    if features1 is not None:
+                        v1 = features1.loc[bodyids[iter1]].values
+                        v2 = features1.loc[bodyids[iter2]].values
+                        diffvec = (v1-v2)**2
+                        diff = (diffvec.sum())**(1/2)
+                        
+                        # difference between differences
+                        v1 = features2.loc[bodyids[iter1]].values
+                        v2 = features2.loc[bodyids[iter2]].values
+                        diffvec = (v1-v2)**2
+                        diff2 = (diffvec.sum())**(1/2)
+                        falsepart2.append((diff-diff2, diff, bodyids[iter1], bodyids[iter2]))
+
+    falsepart1.sort()
+    falsepart1.reverse() 
+    falsepart2.sort()
+    falsepart2.reverse()
+    
+    return falsepart1, falsepart2
+
+    
 class HCluster:
     """Simple wrapper class for cluster output to preserve labeling.
     """
-    def __init__(self, cluster, labels):
+    def __init__(self, cluster, labels, features):
         self.cluster = cluster
         self.labels = labels
+        self.features = features
 
     def compute_vi(self, gtmap, num_parts=0):
         """Return variation of information based on provided ground truth maps.
@@ -60,13 +155,69 @@ class HCluster:
 
         return bestres
 
-    def get_partitions(self, num_parts):
+    def _get_max_dist(self, res):
+        """Gets max distance between features in the same cluster.
+
+        Args:
+            res (dict): cluster id -> [body1, body2, ... ]
+        Returns:
+            (float, tuple): maximum distance between bodies in a cluster
+        """
+        max_dist = 0
+        max_pair = None
+        for idx, group in res.items():
+            for iter1 in range(len(group)):
+                for iter2 in range(iter1+1, len(group)):
+                    v1 = self.features.loc[group[iter1]].values
+                    v2 = self.features.loc[group[iter2]].values
+                    diffvec = (v1-v2)**2
+                    diff = (diffvec.sum())**(1/2)
+                    if diff > max_dist:
+                        max_dist = diff
+                        max_pair = (group[iter1], group[iter2])
+        return max_dist, max_pair
+
+    def get_partitions_dist_constraint(self, dist):
+        """Returns cluster partitions for the specified distance constraint.
+
+        Args:
+            dist (float): maximum distance to allow between bodies in a cluter 
+        Returns:
+            (dict, dataframe, float, tuple): {cluster id: [body1, body2,...]}, "bodyid", "cluster id",
+            distance between farthest bodies, farthest bodies in the same cluster
+        """
+        from scipy.cluster.hierarchy import cut_tree
+
+        previous_result = None
+        partitions = cut_tree(self.cluster)
+        for colid in range(0, len(partitions[0,:])):
+            labels = list(partitions[:,colid])
+            mapping = pd.DataFrame(list(zip(self.labels, labels)), columns=["bodyid", "type"])
+            res = {}
+
+            for idx, label in enumerate(labels):
+                if label not in res:
+                    res[label] = []
+                res[label].append(self.labels[idx])
+        
+            max_dist, max_pair = self._get_max_dist(res)
+            if max_dist > dist:
+                break
+            previous_result = (res, mapping, max_dist, max_pair) 
+
+        return previous_result
+
+
+    def get_partitions(self, num_parts, return_max=False):
         """Returns cluster partitions for specified number of clusters.
 
         Args:
             num_parts (int): number of cluster partitions
+            return_max (boolean): if true return the maximum distance between body ids in one cluster
         Returns:
             (dict, dataframe): {cluster id: [body1, body2,...]}, "bodyid", "cluster id"
+            optional (dict, dataframe, float, tuple): includes maximum distance between bodies in a cluster
+            and those body ids
         """
         from scipy.cluster.hierarchy import cut_tree
         partitions = cut_tree(self.cluster, n_clusters=num_parts)
@@ -78,6 +229,10 @@ class HCluster:
             if label not in res:
                 res[label] = []
             res[label].append(self.labels[idx])
+        
+        if return_max:
+            max_dist, max_pair = self._get_max_dist(res)
+            return (res, mapping, max_dist, max_pair)
         return (res, mapping)
 
 
@@ -268,11 +423,11 @@ def hierarchical_cluster(features):
     from scipy.cluster.hierarchy import linkage
     
     # compute distance function
-    #distm = compute_distance_matrix(features)
+    # distm = compute_distance_matrix(features)
     
     clustering = linkage(features.values, 'ward')
     
-    return HCluster(clustering, features.index.values.tolist())
+    return HCluster(clustering, features.index.values.tolist(), features)
 
 
 def kmeans_cluster(features, num_clusters):
