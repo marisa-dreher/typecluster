@@ -250,14 +250,15 @@ def features_radarchart(features, clusters=None, htmlfile=None):
                 theta=categories,
                 fill='toself',
                 text=index,
-                name=row['type']
+                name=index
+                #name=row['type']
             ))
     
     fig.update_traces(
         hoverinfo='text')
     fig.update_layout(
-        width = 900, 
-        height = 800,
+        width = 1200, 
+        height = 1200,
     polar=dict(
         radialaxis=dict(visible=True)
         ),
