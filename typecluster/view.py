@@ -250,8 +250,8 @@ def features_radarchart(features, clusters=None, htmlfile=None):
                 theta=categories,
                 fill='toself',
                 text=index,
-                name=index
-                #name=row['type']
+                #name=index
+                name=row['type']
             ))
     
     fig.update_traces(

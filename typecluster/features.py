@@ -827,7 +827,7 @@ def find_max_differences(features, body1, body2, numfeatures = 10):
     
     return features_restr
 
-def find_max_variance(features, numfeatures=40):
+def find_max_variance(features, numfeatures=60):
     """Find features with the most variance
 
     Args:
